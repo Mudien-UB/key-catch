@@ -43,22 +43,22 @@ std::map<int, std::string> keyMap = {
     {VK_DELETE, "del"},
 
     // Numpad keys
-    {VK_NUMPAD0, "num0"},
-    {VK_NUMPAD1, "num1"},
-    {VK_NUMPAD2, "num2"},
-    {VK_NUMPAD3, "num3"},
-    {VK_NUMPAD4, "num4"},
-    {VK_NUMPAD5, "num5"},
-    {VK_NUMPAD6, "num6"},
-    {VK_NUMPAD7, "num7"},
-    {VK_NUMPAD8, "num8"},
-    {VK_NUMPAD9, "num9"},
-    {VK_MULTIPLY, "num*"},
-    {VK_ADD, "num+"},
-    {VK_SEPARATOR, "num,"},
-    {VK_SUBTRACT, "num-"},
-    {VK_DECIMAL, "num."},
-    {VK_DIVIDE, "num/"},
+    {VK_NUMPAD0, "0"},
+    {VK_NUMPAD1, "1"},
+    {VK_NUMPAD2, "2"},
+    {VK_NUMPAD3, "3"},
+    {VK_NUMPAD4, "4"},
+    {VK_NUMPAD5, "5"},
+    {VK_NUMPAD6, "6"},
+    {VK_NUMPAD7, "7"},
+    {VK_NUMPAD8, "8"},
+    {VK_NUMPAD9, "9"},
+    {VK_MULTIPLY, "*"},
+    {VK_ADD, "+"},
+    {VK_SEPARATOR, ","},
+    {VK_SUBTRACT, "-"},
+    {VK_DECIMAL, "."},
+    {VK_DIVIDE, "/"},
 
     // Special keys
     {VK_NUMLOCK, "NUMLOCK"},
@@ -125,5 +125,4 @@ std::map<int, std::string> keyMap = {
     {VK_LWIN, "LWIN"},
     {VK_RWIN, "RWIN"},
 };
-
 #endif // KEYMAP_H

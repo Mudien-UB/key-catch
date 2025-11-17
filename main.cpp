@@ -2,10 +2,19 @@
 #include <chrono>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
 #include <windows.h>
+
+// === Global state ===
+std::set<int> pressedKeys;
+std::vector<std::string> history;
+std::string liveText = "";
+bool wantToExit = false;
+bool needRedraw = true;
+HHOOK keyboardHook;
 
 // === cek key yang di ignore ===
 bool ignoredKey(int k) {
@@ -18,42 +27,53 @@ bool isModifier(int k) {
 }
 
 // === format kombinasi key ===
-std::string formatCombo(const std::vector<int> &codes) {
-  bool c = false, a = false, s = false;
-  std::string last = "";
+std::string formatCombo(const std::set<int> &codes) {
+  bool ctrl = false, alt = false, shift = false;
+  std::string mainKey = "";
 
   for (int k : codes) {
     if (ignoredKey(k))
       continue;
 
-    if (k == VK_CONTROL)
-      c = true;
-    else if (k == VK_MENU)
-      a = true;
-    else if (k == VK_SHIFT)
-      s = true;
-    else {
+    if (k == VK_LCONTROL || k == VK_RCONTROL || k == VK_CONTROL)
+      ctrl = true;
+    else if (k == VK_LMENU || k == VK_RMENU || k == VK_MENU)
+      alt = true;
+    else if (k == VK_LSHIFT || k == VK_RSHIFT || k == VK_SHIFT)
+      shift = true;
+    else if (!isModifier(k)) {
       if (keyMap.count(k))
-        last = keyMap.at(k);
+        mainKey = keyMap.at(k);
       else if (k >= 'A' && k <= 'Z')
-        last = std::string(1, (char)k);
+        mainKey = std::string(1, (char)k);
       else if (k >= '0' && k <= '9')
-        last = std::string(1, (char)k);
+        mainKey = std::string(1, (char)k);
     }
   }
 
-  // jika tidak ada
-  if (last == "")
-    last = " ";
+  if (mainKey == "")
+    mainKey = " ";
 
-  std::string out = "<";
-  if (c)
-    out += "C-";
-  if (a)
-    out += "A-";
-  if (s)
-    out += "S-";
-  out += last + ">";
+  // jika hanya modifier tanpa key lain, tidak format sebagai combo
+  if (mainKey == " " && (ctrl || alt || shift))
+    return "";
+
+  std::string out = "";
+  bool hasModifier = ctrl || alt || shift;
+
+  if (hasModifier) {
+    out = "<";
+    if (ctrl)
+      out += "C-";
+    if (alt)
+      out += "A-";
+    if (shift)
+      out += "S-";
+    out += mainKey + ">";
+  } else {
+    out = mainKey;
+  }
+
   return out;
 }
 
@@ -84,122 +104,133 @@ void printBox(const std::string &text, int index) {
   std::cout << "+" << std::string(w, '-') << "+\n";
 }
 
-// === main program ===
-int main() {
-  bool prevState[256] = {0};
-  bool currState[256] = {0};
+// === update display ===
+void updateDisplay() {
+  clearFullScreen();
+  std::cout << "=== KEY OVERLAY (HOOK MODE) ===\n";
 
-  std::vector<std::string> history;
-  std::string liveText = "";
-  std::string lastFinalKey = "";
-  bool wantToExit = false;
+  if (wantToExit) {
+    std::cout << "[ EXIT MODE ACTIVE - Press 'end' to exit ]\n";
+  } else {
+    std::cout << "Press 'tab' then 'end' to enter exit mode\n";
+  }
+  std::cout << "\n";
 
-  while (true) {
+  std::cout << "[ LIVE ]\n";
+  printBox(liveText == "" ? "no display" : liveText, 0);
 
-    // === scan key ===
-    for (int i = 0; i < 256; i++) {
-      if (ignoredKey(i))
-        currState[i] = false;
-      else
-        currState[i] = (GetAsyncKeyState(i) & 0x8000) != 0;
+  std::cout << "\n[ HISTORY ]\n";
+  for (size_t i = 0; i < history.size(); i++) {
+    printBox(history[i], i + 1);
+  }
+}
+
+LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+  if (nCode == HC_ACTION) {
+    KBDLLHOOKSTRUCT *kbd = (KBDLLHOOKSTRUCT *)lParam;
+    int vkCode = kbd->vkCode;
+
+    if (ignoredKey(vkCode)) {
+      return CallNextHookEx(keyboardHook, nCode, wParam, lParam);
     }
 
-    // === keys yang aktif ===
-    std::vector<int> activeKeys;
-    for (int k = 0; k < 256; k++) {
-      if (currState[k] && !ignoredKey(k))
-        activeKeys.push_back(k);
-    }
+    if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+      // Key pressed
+      pressedKeys.insert(vkCode);
 
-    // === key kombinasi ===
-    if (!activeKeys.empty()) {
-      bool ctrl = currState[VK_CONTROL];
-      bool alt = currState[VK_MENU];
-      bool shift = currState[VK_SHIFT];
-      bool hasMod = ctrl || alt || shift;
+      // Update live text
+      liveText = formatCombo(pressedKeys);
+      needRedraw = true;
 
-      if (hasMod && activeKeys.size() >= 2) {
-        liveText = formatCombo(activeKeys);
-        lastFinalKey = liveText;
-      } else {
-        int k = activeKeys.back();
-        if (keyMap.count(k))
-          liveText = keyMap.at(k);
-        else if (k >= 'A' && k <= 'Z')
-          liveText = std::string(1, (char)k);
-        else if (k >= '0' && k <= '9')
-          liveText = std::string(1, (char)k);
-        lastFinalKey = liveText;
-      }
-    }
+    } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
+      // Key released
 
-    // === pengolahan penyimpanan key ===
-    bool anyPrev = false;
-    bool anyNow = false;
+      // Simpan ke history sebelum menghapus dari pressedKeys
+      if (!pressedKeys.empty()) {
+        std::string finalKey = formatCombo(pressedKeys);
 
-    for (int i = 0; i < 256; i++)
-      if (!ignoredKey(i) && prevState[i])
-        anyPrev = true;
+        if (finalKey != "" && !finalKey.empty()) {
+          history.push_back(finalKey);
 
-    for (int i = 0; i < 256; i++)
-      if (!ignoredKey(i) && currState[i])
-        anyNow = true;
+          // Check exit sequence: tab -> end
+          if (history.size() >= 2) {
+            std::string prev = history[history.size() - 2];
+            std::string curr = history[history.size() - 1];
 
-    // Jika sebelumnya ada key, sekarang tidak ada key → simpan history
-    if (anyPrev && !anyNow) {
-      if (lastFinalKey != "") {
-        history.push_back(lastFinalKey);
-        lastFinalKey = "";
-
-        // Check exit sequence: tab -> end
-        if (history.size() >= 2) {
-          std::string prev = history[history.size() - 2];
-          std::string curr = history[history.size() - 1];
-
-          if (prev == "tab" && curr == "end" || curr == "end") {
-
-            if (wantToExit) {
-              // Second sequence detected, exit
-              std::cout << "\n\nExit sequence confirmed. Goodbye!\n";
-              std::this_thread::sleep_for(std::chrono::milliseconds(500));
-              break;
-            } else {
-              // First sequence detected, activate exit mode
+            if (prev == "tab" && curr == "end") {
+              // Masuk exit mode
               wantToExit = true;
+            } else if (wantToExit && curr == "end") {
+              // Exit confirmed - tekan end saat exit mode aktif
+              PostQuitMessage(0);
+            } else if (curr != "end") {
+              // Reset exit mode jika bukan end
+              wantToExit = false;
             }
-          } else {
-            // Reset if different sequence
-            wantToExit = false;
           }
+
+          // Keep only last 2 in history
+          if (history.size() > 3)
+            history.erase(history.begin());
         }
       }
-      if (history.size() > 2)
-        history.erase(history.begin());
+
+      pressedKeys.erase(vkCode);
+
+      // Update live text
+      if (pressedKeys.empty()) {
+        liveText = "";
+      } else {
+        liveText = formatCombo(pressedKeys);
+      }
+
+      needRedraw = true;
     }
-
-    // === tampilan ===
-    clearFullScreen();
-    std::cout << "=== KEY OVERLAY (LIVE) ===\n";
-
-    if (wantToExit) {
-      std::cout << "[ EXIT MODE ACTIVE - Press end again to exit ]\n";
-    } else {
-      std::cout << "save in history { tab and end } to exit mode\n";
-    }
-    std::cout << "\n";
-
-    std::cout << "[ LIVE ]\n";
-    printBox(liveText == "" ? " " : liveText, 0);
-
-    std::cout << "\n[ HISTORY ]\n";
-    for (size_t i = 0; i < history.size(); i++) {
-      printBox(history[i], i + 1);
-    }
-
-    // copy state
-    for (int i = 0; i < 256; i++)
-      prevState[i] = currState[i];
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
   }
+
+  return CallNextHookEx(keyboardHook, nCode, wParam, lParam);
+}
+
+// === main program ===
+int main() {
+  // Install low-level keyboard hook
+  keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, NULL, 0);
+
+  if (!keyboardHook) {
+    std::cerr << "Failed to install keyboard hook!\n";
+    return 1;
+  }
+
+  std::cout << "Keyboard hook installed. Starting overlay...\n";
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  // Initial display
+  updateDisplay();
+
+  // Message loop with display update thread
+  MSG msg;
+  std::thread displayThread([&]() {
+    while (true) {
+      if (needRedraw) {
+        updateDisplay();
+        needRedraw = false;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+  });
+
+  // Message pump
+  while (GetMessage(&msg, NULL, 0, 0)) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
+
+  // Cleanup
+  displayThread.detach();
+  UnhookWindowsHookEx(keyboardHook);
+
+  std::cout << "\n\nExit sequence confirmed. Goodbye!\n";
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  return 0;
 }
